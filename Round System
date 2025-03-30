@@ -1,0 +1,198 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local MarketPlaceService = game:GetService("MarketplaceService")
+local Players = game:GetService("Players")
+
+local Modules = ReplicatedStorage:WaitForChild("Modules")
+local GiantControleModule = require(Modules.GiantController)
+
+local Maps = ReplicatedStorage:WaitForChild("Maps")
+
+local Round = {}
+
+local function ClearPlayerSkills()
+	for _,player in pairs(Players:GetChildren()) do
+		player.Punch.Value = 0
+		for i,Skill in pairs(player.Skills:GetChildren()) do
+			Skill.Value = 0
+		end
+
+	end
+end
+
+function Round.Init()
+	script:SetAttribute("Timer",20)
+	script:SetAttribute("Round",false)
+	
+	Round:Intermission()
+end
+
+
+function Round:Start()
+	if #Players:GetChildren() == 0 then Round:Intermission() return end
+	
+	local Map : Model = Maps:GetChildren()[math.random(#Maps:GetChildren())]:Clone() -- Loading Map
+	local PartToLoad = #Map:GetDescendants()
+	Map.Parent = workspace.Map
+	repeat task.wait()
+	until #game.Workspace.Map[Map.Name]:GetDescendants() == PartToLoad
+	
+	
+	for _,Player : Player in pairs(Players:GetChildren()) do -- Teleporting Players 
+		if not Player.Character then continue end
+		Player.Character:PivotTo(Map.PrimaryPart:GetPivot())
+		Player:SetAttribute("ALive",true)
+		Player:SetAttribute("SurvivedTime",0)
+		Player:SetAttribute("Coin",0)
+		Player.Character.Humanoid.Died:Once(function()
+			Player:SetAttribute("ALive",false)
+		end)
+	end
+	
+	for i = 15,0,-1 do -- Ending Intermission
+		task.wait(1)
+		script:SetAttribute("Timer",i)
+	end
+	script:SetAttribute("Round",true)
+	local GiantPlayer -- Picking Giant Player
+	local donateGiants = {}
+	for _,player : player in pairs(Players:GetChildren()) do
+		if player.beGiant.Value == true then table.insert(donateGiants,player) end
+	end
+	if #donateGiants > 0 then
+		GiantPlayer = donateGiants[math.random(1,#donateGiants)]
+		GiantPlayer.beGiant.Value = false
+	else
+		GiantPlayer = Players:GetChildren()[math.random(1,#Players:GetChildren())]
+	end
+	
+	GiantPlayer:SetAttribute("ALive",true)
+	GiantPlayer:SetAttribute("SurvivedTime",0)
+	GiantPlayer:SetAttribute("Coin",0)
+	GiantPlayer.Character:PivotTo(Map.PrimaryPart:GetPivot() + Vector3.new(0,20,0)) -- Teleporting Giant
+	GiantPlayer.Character:ScaleTo(10) 
+	GiantPlayer.Character.Humanoid.WalkSpeed = 40
+	GiantPlayer.Character.Humanoid.JumpHeight = 32
+	script.Parent.GiantController.CurrentGiant.Value = GiantPlayer
+	GiantControleModule.new(GiantPlayer)
+	
+	task.spawn(function()                  -- Coin Generation
+		local Coins = workspace.Coins
+		local Floor = workspace.Map:GetChildren()[1].Borders.Floor
+		local Xlenght = Floor.Size.X
+		local Zlenght = Floor.Size.Z
+		
+		local rayCastParamns = RaycastParams.new()
+		rayCastParamns.FilterDescendantsInstances = {workspace.Map}
+		rayCastParamns.FilterType = Enum.RaycastFilterType.Include
+		
+		while script:GetAttribute("Round") == true do
+			task.wait(0.8)
+			local Coin = game.ReplicatedStorage.Models.Misk.Coin:Clone()
+			local Origin = Vector3.new(math.random(-Xlenght / 2,Xlenght / 2),200,math.random(-Zlenght / 2,Zlenght / 2))
+			local Direction = Vector3.new(0,-300,0)
+			local Debounce = false
+			
+			local newRayCast = workspace:Raycast(Origin,Direction,rayCastParamns) if not newRayCast then continue end
+			Coin:PivotTo(CFrame.new(newRayCast.Position + Vector3.new(0,3,0)))
+			Coin:SetAttribute("Origin",Coin.PrimaryPart.Position)
+			Coin:SetAttribute("Time",workspace:GetServerTimeNow())
+			Coin.Parent = workspace.Coins
+			Coin.hitbox.Touched:Connect(function(hit)
+				local pl = Players:GetPlayerFromCharacter(hit.Parent)
+				if not pl then return end
+				if pl == GiantPlayer then return end
+				if pl:GetAttribute("Coin") >= pl:GetAttribute("MaxCoins") then return end
+				if pl:GetAttribute("ALive") == false then return end
+				if Debounce then return end
+				Debounce = true
+				local Sound = ReplicatedStorage.SFX.CoinPickup:Clone()
+				Sound.Position = Coin.PrimaryPart.Position
+				Sound.Parent = workspace
+				Sound.Coin:Play()
+				game.Debris:AddItem(Sound,2)
+				pl:SetAttribute("Coin",pl:GetAttribute("Coin") + 1)
+				Coin:Destroy()
+			end)
+		end
+	end)
+	
+	task.spawn(function() -- Loading Players
+		local Players = game.Players
+		local function ClearPlayerSkills()
+			for _,player in pairs(Players:GetChildren()) do
+				local SkillFolder = player:FindFirstChild("Skills")
+				if SkillFolder then
+					for _,skill in pairs(SkillFolder:GetChildren()) do
+						skill.Value = 0
+					end
+				end
+			end
+		end
+	end)
+	
+	for i = 120,0,-1 do -- Round countdown
+		task.wait(1)
+		if script:GetAttribute("Round") == false then break end
+		script:SetAttribute("Timer",i)
+		local Counter = 0	if #Players:GetChildren() == 1 then Counter = 1 end
+		for _, pl in pairs(Players:GetChildren()) do
+			if pl:GetAttribute("ALive") == true then 
+				pl:SetAttribute("SurvivedTime",120 - i)
+				if pl == GiantPlayer then continue end
+				Counter += 1 
+			end
+		end
+		if Counter == 0 then break end
+		if GiantPlayer == nil then break end
+		if GiantPlayer:GetAttribute("ALive") == false then break end
+	end
+	script:SetAttribute("Round",false)
+	for _,pl : Player in pairs(Players:GetChildren()) do
+		if not pl.Character then continue end
+		pl:LoadCharacter()
+	end
+	Round:Intermission()
+end
+
+
+function Round:Intermission()
+	script:SetAttribute("Round",false)
+	script.Parent.GiantController.CurrentGiant.Value = nil
+	
+	ClearPlayerSkills()
+	
+	for _,player : Player in pairs(Players:GetChildren()) do
+		if not player:GetAttribute("SurvivedTime") then continue end
+			
+		local MoneyToAdd = 0
+		MoneyToAdd += player:GetAttribute("Coin") * 2
+		MoneyToAdd += math.ceil(player:GetAttribute("SurvivedTime") / 3)
+		if player:GetAttribute("ALive") then MoneyToAdd += 60 end
+		if MarketPlaceService:UserOwnsGamePassAsync(player.UserId,1109060804) then MoneyToAdd *= 3 end
+ 
+		player.Money.Value += MoneyToAdd
+	end
+	
+	for i = 15,0,-1 do -- Starting Intermission
+		task.wait(1)
+		script:SetAttribute("Timer",i)
+	end
+	
+	workspace.Trash:ClearAllChildren()	--	Clearing Map
+	workspace.Map:ClearAllChildren()
+	workspace.Coins:ClearAllChildren()
+	repeat task.wait() until #workspace.Trash:GetChildren() == 0
+	repeat task.wait() until #workspace.Map:GetChildren() == 0
+	repeat task.wait() until #workspace.Coins:GetChildren() == 0
+	
+	local Succes, errormsg = pcall(function()
+		Round:Start()
+	end)
+	if not Succes then 
+		warn(errormsg) 
+		Round:Intermission() 
+		print("fail")
+	end
+end
+
+return Round
